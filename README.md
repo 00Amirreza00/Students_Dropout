@@ -6,5 +6,7 @@ The data is used to build classification models to predict students' dropout and
 
 The problem is formulated as a three category classification task, in which there is a strong imbalance towards one of the classes.
 
+The aim of the project is to compare different methods of handling class imbalance. 
+
 The dataset is available on UC Irvine Machine Learning Repository: https://archive.ics.uci.edu/dataset/697/predict+students+dropout+and+academic+success
 
