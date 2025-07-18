@@ -13,6 +13,10 @@ from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.neighbors import KNeighborsClassifier
 from imblearn.over_sampling import SMOTE , ADASYN, RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler
+from imblearn.pipeline import Pipeline as ImbPipeline
+from sklearn.model_selection import GridSearchCV
+
+from xgboost import XGBClassifier
 
 st.image('picture1.jpg')
 st.title('Students\' Dropout and Academic Success')
@@ -46,11 +50,11 @@ continuous_cols = [
 for col in categorical_cols:
     df[col] = df[col].astype('category')
 
-# Convert binary features
+# # Convert binary features
 binary_cols = ['Daytime/evening attendance', 'Displaced', 'Educational special needs', 
                'Debtor', 'Tuition fees up to date', 'Gender', 'Scholarship holder', 'International']
-for col in binary_cols:
-    df[col] = df[col].astype(bool)
+# for col in binary_cols:
+#     df[col] = df[col].astype(bool)
 
 # Ordinal column
 ordinal_cols = ['Application order']
@@ -61,6 +65,52 @@ target_col = 'Target'
 # Calculate imbalance ratio
 class_counts = df['Target'].value_counts()
 imbalance_ratio = class_counts.max() / class_counts.min()
+
+df1 = df.copy()
+
+##### Feature Engineering
+
+# Ratio of approved to enrolled curricular units (1st and 2nd semester)
+df['approved_enrolled_ratio_1st'] = df['Curricular units 1st sem (approved)'] / (df['Curricular units 1st sem (enrolled)'] + 1e-6)
+df['approved_enrolled_ratio_2nd'] = df['Curricular units 2nd sem (approved)'] / (df['Curricular units 2nd sem (enrolled)'] + 1e-6)
+
+# Ratio of evaluations to enrolled units
+df['evals_enrolled_ratio_1st'] = df['Curricular units 1st sem (evaluations)'] / (df['Curricular units 1st sem (enrolled)'] + 1e-6)
+df['evals_enrolled_ratio_2nd'] = df['Curricular units 2nd sem (evaluations)'] / (df['Curricular units 2nd sem (enrolled)'] + 1e-6)
+
+# Is the student currently enrolled in any curricular units (1st or 2nd sem)?
+df['currently_enrolled_1st'] = (df['Curricular units 1st sem (enrolled)'] > 0).astype(int)
+df['currently_enrolled_2nd'] = (df['Curricular units 2nd sem (enrolled)'] > 0).astype(int)
+df['currently_enrolled_any'] = ((df['Curricular units 1st sem (enrolled)'] > 0) | 
+                                (df['Curricular units 2nd sem (enrolled)'] > 0)).astype(int)
+
+# Units enrolled but not yet approved (proxy for "in progress")
+df['pending_units_1st'] = df['Curricular units 1st sem (enrolled)'] - df['Curricular units 1st sem (approved)']
+df['pending_units_2nd'] = df['Curricular units 2nd sem (enrolled)'] - df['Curricular units 2nd sem (approved)']
+df['pending_units_total'] = df['pending_units_1st'] + df['pending_units_2nd']
+
+
+df['is_debtor'] = df['Debtor'].astype(int)
+df['fees_up_to_date'] = df['Tuition fees up to date'].astype(int)
+
+
+# Whether the student had any semester with zero approved units (potential dropout risk)
+df['zero_approved_1st'] = (df['Curricular units 1st sem (approved)'] == 0).astype(int)
+df['zero_approved_2nd'] = (df['Curricular units 2nd sem (approved)'] == 0).astype(int)
+df['any_zero_approved'] = ((df['zero_approved_1st'] == 1) | (df['zero_approved_2nd'] == 1)).astype(int)
+
+# Whether the student had any semester with zero evaluations (potential disengagement)
+df['zero_evals_1st'] = (df['Curricular units 1st sem (evaluations)'] == 0).astype(int)
+df['zero_evals_2nd'] = (df['Curricular units 2nd sem (evaluations)'] == 0).astype(int)
+df['any_zero_evals'] = ((df['zero_evals_1st'] == 1) | (df['zero_evals_2nd'] == 1)).astype(int)
+
+# Interaction between age and admission grade (older students with high/low grades)
+df['age_admission_interaction'] = df['Age at enrollment'] * df['Admission grade']
+
+# Highest parental occupation
+df['highest_parent_occupation'] = df[['Mother\'s occupation', 'Father\'s occupation']].max(axis=1)
+
+df.drop(columns=["Mother\'s occupation", "Father\'s occupation"], inplace=True)
 
 ######
 st.subheader('Data Exploration')
@@ -112,157 +162,521 @@ with st.expander("Data Modelling"):
         st.write('ADASYN (Adaptive Synthetic Sampling) is an advanced technique that generates synthetic samples for the minority classes, focusing more on the difficult-to-learn samples.')
         st.write('This technique generates synthetic samples for the minority classes, focusing more on the difficult-to-learn samples.')
         st.image('adasyn.jpg', caption='ADASYN technique illustration', use_column_width=True)
-   
-     
-    X = df.drop(columns=[target_col])
-    y = df[target_col]
-    le = LabelEncoder()
-    y_encoded = le.fit_transform(y)
+    
+    tab5, =st.tabs(["Feature Engineering"])
+    with tab5:
+        st.write('New features are created based on the existing features to improve the model performance:')
+        st.write('- "Curricular units (approved)" and "Curricular units (enrolled)" are combined to create a new feature "approved-enrolled ratio".')
+        st.write('- "Curricular units (evaluations)" and "Curricular units (enrolled)" are combined to create a new feature "evals-enrolled ratio".')
+        st.write('- "Curricular units (enrolled)" and "Curricular units (approved)" are used to create a new feature "currently enrolled".')
+        st.write('- "Curricular units (enrolled)" and "Curricular units (approved)" are used to create a new feature "pending units (in progress)".')
+        st.write('- "Curricular units (approved)" and "Curricular units (evaluations)" are used to create new features indicating whether the student had any semester with zero approved units or evaluations.')
+        st.write('- "Age at enrollment" and "Admission grade" are combined to create a new feature "age-admission interaction".')
+        st.write('- "Mother\'s occupation" and "Father\'s occupation" are combined to create a new feature "highest parent occupation".')
 
-    X_train0, X_test, y_train0, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)    
+######
+# without considering feature engineering
+X = df1.drop(columns=[target_col])
+y = df1[target_col]
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+
+X_train0, X_test, y_train0, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)    
 
 ####################
-    Model_names = ['RFC', 'RFC_with_weighted_sampling', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
-    all_results = []
+Model_names = ['RFC', 'RFC_with_weighted_sampling', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
+all_results = []
 
-    preprocessor = ColumnTransformer(
-        transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols)],
-        remainder='passthrough')
+resamplers = {
+    'SMOTE': SMOTE(random_state=42),
+    'ROS': RandomOverSampler(random_state=42),
+    'ADASYN': ADASYN(random_state=42),
+    'RUS': RandomUnderSampler(random_state=42),
+    'RFC': None,  # No resampling for Random Forest
+    'RFC_with_weighted_sampling': None  # Weighted sampling for Random Forest
+}
 
-    # Fit and transform training and test data once
-    X_train0_transformed = preprocessor.fit_transform(X_train0)
-    X_test_transformed = preprocessor.transform(X_test)
+all_results = []
 
-    pipeline = RandomForestClassifier(random_state=42)
+for model_name, sampler in resamplers.items():
 
-    for model in Model_names:
-        if model == 'RFC':
-            X_train = X_train0_transformed
-            y_train = y_train0
-        elif model == 'SMOTE':
-            smote = SMOTE(sampling_strategy='auto', random_state=42)
-            X_train, y_train = smote.fit_resample(X_train0_transformed, y_train0)
-        elif model == 'ROS':
-            ros = RandomOverSampler(random_state=42)
-            X_train, y_train = ros.fit_resample(X_train0_transformed, y_train0)
-        elif model == 'RUS':
-            rus = RandomUnderSampler(random_state=42)
-            X_train, y_train = rus.fit_resample(X_train0_transformed, y_train0)
-        elif model == 'ADASYN':
-            adasyn = ADASYN(random_state=42)
-            X_train, y_train = adasyn.fit_resample(X_train0_transformed, y_train0)
-            
-        if  model == 'RFC_with_weighted_sampling':
-            sample_weights = compute_sample_weight(class_weight="balanced", y=y_train0)
-            pipeline.fit(X_train0_transformed, y_train0, sample_weight=sample_weights)
-            y_pred = pipeline.predict(X_test_transformed) 
-        else:  
-            pipeline.fit(X_train, y_train)
-            y_pred = pipeline.predict(X_test_transformed)
-            
-        all_results.append({
-                "type": model,
-                "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
-                "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
-            })
+    pipeline = ImbPipeline([
+        ('sampler', sampler),
+        ('clf', RandomForestClassifier(random_state=42))
+    ])
+    if model_name == 'RFC_with_weighted_sampling':
+        sample_weights = compute_sample_weight(class_weight="balanced", y=y_train0)
+        pipeline.fit(X_train0, y_train0, clf__sample_weight=sample_weights)
+    else:
+        pipeline.fit(X_train0, y_train0)
 
-    n_models = len(all_results)
-    n_cols = int(np.ceil(np.sqrt(n_models)))
-    n_rows = int(np.ceil(n_models / n_cols))
+    y_pred = pipeline.predict(X_test)
 
-    df_results = pd.DataFrame(all_results).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
+    all_results.append({
+        "type": model_name,
+        "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+        "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+    })
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 12))
-    axes = axes.flatten() 
+    
+# pipeline = Pipeline([
+#         # ('preprocess', preprocessor),
+#     ('clf', RandomForestClassifier(random_state=42))])  
 
-    for idx, result in df_results.iterrows():
-        disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
-        disp.plot(ax=axes[idx], colorbar=False, cmap='Blues')
-        axes[idx].set_title(f'{result["type"]}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
 
-    for idx in range(n_models, len(axes)):
-        axes[idx].axis('off')
+# for model in Model_names:
+#     if model == 'RFC':
+#         X_train = X_train0
+#         y_train = y_train0
+#     elif model == 'SMOTE':
+#         smote = SMOTE(sampling_strategy='auto', random_state=42)
+#         X_train, y_train = smote.fit_resample(X_train0, y_train0)
+#     elif model == 'ROS':
+#         ros = RandomOverSampler(random_state=42)
+#         X_train, y_train = ros.fit_resample(X_train0, y_train0)
+#     elif model == 'RUS':
+#         rus = RandomUnderSampler(random_state=42)
+#         X_train, y_train = rus.fit_resample(X_train0, y_train0)
+#     elif model == 'ADASYN':
+#         adasyn = ADASYN(random_state=42)
+#         X_train, y_train = adasyn.fit_resample(X_train0, y_train0)
 
-    plt.tight_layout()
+#     if  model == 'RFC_with_weighted_sampling':
+#         sample_weights = compute_sample_weight(class_weight="balanced", y=y_train0)
+#         pipeline.fit(X_train0, y_train0, clf__sample_weight=sample_weights)
+#         y_pred = pipeline.predict(X_test) 
+#     else:  
+#         pipeline.fit(X_train, y_train)
+#         y_pred = pipeline.predict(X_test)
+
+#     all_results.append({
+#             "type": model,
+#             "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+#             "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+#         })
+
+n_models = len(all_results)
+n_cols = int(np.ceil(np.sqrt(n_models)))
+n_rows = int(np.ceil(n_models / n_cols))
+
+df_results = pd.DataFrame(all_results).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 12))
+axes = axes.flatten() 
+
+for idx, result in df_results.iterrows():
+    disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
+    disp.plot(ax=axes[idx], colorbar=False, cmap='Blues')
+    axes[idx].set_title(f'{result["type"]}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
+
+for idx in range(n_models, len(axes)):
+    axes[idx].axis('off')
+
+plt.tight_layout()
 
 
 #########################################
-    all_results_knn=[]
+all_results_knn=[]
+# categorical_cols = ['Marital status', 'Application mode', 'Course', 'Previous qualification', 
+#                     "Nationality", "Mother's qualification", "Father's qualification"]
+#     ###
+preprocessor_knn_norm = ColumnTransformer(
+    transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols),
+    ('cont', StandardScaler(), continuous_cols + ordinal_cols)],
+    remainder='passthrough')
 
-    ###
-    preprocessor_knn = ColumnTransformer(
-        transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols)],
-        remainder='passthrough')
+preprocessor_knn = ColumnTransformer(
+    transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols)],
+    remainder='passthrough')
 
-    pipeline_knn = Pipeline([
-        ('preprocess', preprocessor_knn),
-        ('clf', KNeighborsClassifier(n_neighbors=3))])
+resamplers = {
+    'SMOTE': SMOTE(random_state=42),
+    'ROS': RandomOverSampler(random_state=42),
+    'ADASYN': ADASYN(random_state=42),
+    'RUS': RandomUnderSampler(random_state=42),
+    'KNN': None,  # No resampling for KNN
+    'KNN_with_normalization': None  # Normalization for KNN
+}
 
-    pipeline_knn.fit(X_train0, y_train0)
-    y_pred = pipeline_knn.predict(X_test)
+
+for model_name, sampler in resamplers.items():
+
+    pipeline = ImbPipeline([
+        ('sampler', sampler),
+        ('clf',  KNeighborsClassifier(n_neighbors=3))
+    ])
+    if model_name == 'KNN_with_normalization':
+        pipeline.steps.insert(0, ('preprocess', preprocessor_knn_norm))
+        pipeline.fit(X_train0, y_train0)
+    else:
+        pipeline.steps.insert(0, ('preprocess', preprocessor_knn))
+        pipeline.fit(X_train0, y_train0)
+
+    y_pred = pipeline.predict(X_test)
 
     all_results_knn.append({
-                "type": "knn_without_normalization",
-                "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
-                "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
-            })
-    ###
+        "type": model_name,
+        "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+        "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+    })
 
-    preprocessor_knn = ColumnTransformer(
-        transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols),
-        ('cont', StandardScaler(), continuous_cols + ordinal_cols)],
-        remainder='passthrough')
+# preprocessor_knn = ColumnTransformer(
+#     transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols)],
+#     remainder='passthrough')
 
-    pipeline_knn = Pipeline([
-        ('preprocess', preprocessor_knn),
-        ('clf', KNeighborsClassifier(n_neighbors=3))])
+# pipeline_knn = Pipeline([
+#     ('preprocess', preprocessor_knn),
+#     ('clf', KNeighborsClassifier(n_neighbors=3))])
 
-    Model_names_knn = ['knn', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
-    for model in Model_names_knn:
-        if model == 'knn':
-            X_train = X_train0
-            y_train = y_train0
-        elif model == 'SMOTE':
-            smote = SMOTE(sampling_strategy='auto', random_state=42)
-            X_train, y_train = smote.fit_resample(X_train0, y_train0)
-        elif model == 'ROS':
-            ros = RandomOverSampler(random_state=42)
-            X_train, y_train = ros.fit_resample(X_train0, y_train0)
-        elif model == 'RUS':
-            rus = RandomUnderSampler(random_state=42)
-            X_train, y_train = rus.fit_resample(X_train0, y_train0)
-        elif model == 'ADASYN':
-            adasyn = ADASYN(random_state=42)
-            X_train, y_train = adasyn.fit_resample(X_train0, y_train0)
+# pipeline_knn.fit(X_train0, y_train0)
+# y_pred = pipeline_knn.predict(X_test)
 
-        pipeline_knn.fit(X_train, y_train)
-        y_pred = pipeline_knn.predict(X_test)
+# all_results_knn.append({
+#             "type": "knn_without_normalization",
+#             "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+#             "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+#         })
+#     ###
+
+# preprocessor_knn = ColumnTransformer(
+#     transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols),
+#     ('cont', StandardScaler(), continuous_cols + ordinal_cols)],
+#     remainder='passthrough')
+
+# pipeline_knn = Pipeline([
+#     ('preprocess', preprocessor_knn),
+#     ('clf', KNeighborsClassifier(n_neighbors=3))])
+
+# Model_names_knn = ['knn', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
+# for model in Model_names_knn:
+#     if model == 'knn':
+#         X_train = X_train0
+#         y_train = y_train0
+#     elif model == 'SMOTE':
+#         smote = SMOTE(sampling_strategy='auto', random_state=42)
+#         X_train, y_train = smote.fit_resample(X_train0, y_train0)
+#     elif model == 'ROS':
+#         ros = RandomOverSampler(random_state=42)
+#         X_train, y_train = ros.fit_resample(X_train0, y_train0)
+#     elif model == 'RUS':
+#         rus = RandomUnderSampler(random_state=42)
+#         X_train, y_train = rus.fit_resample(X_train0, y_train0)
+#     elif model == 'ADASYN':
+#         adasyn = ADASYN(random_state=42)
+#         X_train, y_train = adasyn.fit_resample(X_train0, y_train0)
+
+#     pipeline_knn.fit(X_train, y_train)
+#     y_pred = pipeline_knn.predict(X_test)
             
-        all_results_knn.append({
-                "type": model,
-                "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
-                "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
-            })
+#     all_results_knn.append({
+#             "type": model,
+#             "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+#             "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+#         })
 
-    n_models = len(all_results_knn)
-    n_cols = int(np.ceil(np.sqrt(n_models)))
-    n_rows = int(np.ceil(n_models / n_cols))
+n_models = len(all_results_knn)
+n_cols = int(np.ceil(np.sqrt(n_models)))
+n_rows = int(np.ceil(n_models / n_cols))
 
-    df_results_knn = pd.DataFrame(all_results_knn).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
+df_results_knn = pd.DataFrame(all_results_knn).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
 
-    fig1, axes1 = plt.subplots(n_rows, n_cols, figsize=(15, 12))
-    axes1 = axes1.flatten() 
+fig1, axes1 = plt.subplots(n_rows, n_cols, figsize=(15, 12))
+axes1 = axes1.flatten() 
 
-    for idx, result in df_results_knn.iterrows():
-        disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
-        disp.plot(ax=axes1[idx], colorbar=False, cmap='Blues')
-        axes1[idx].set_title(f'{result["type"]}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
+for idx, result in df_results_knn.iterrows():
+    disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
+    disp.plot(ax=axes1[idx], colorbar=False, cmap='Blues')
+    axes1[idx].set_title(f'{result["type"]}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
 
-    for idx in range(n_models, len(axes1)):
-        axes1[idx].axis('off')
-    plt.tight_layout()
+for idx in range(n_models, len(axes1)):
+    axes1[idx].axis('off')
+plt.tight_layout()
 
+
+##########################################
+# With considering feature engineering
+X = df.drop(columns=[target_col])
+y = df[target_col]
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+
+X_train0, X_test, y_train0, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)    
+
+####################
+#Random Forest Classifier with feature engineering
+resamplers = {
+    'SMOTE': SMOTE(random_state=42),
+    'ROS': RandomOverSampler(random_state=42),
+    'ADASYN': ADASYN(random_state=42),
+    'RUS': RandomUnderSampler(random_state=42),
+    'RFC': None,  # No resampling for Random Forest
+    'RFC_with_weighted_sampling': None  # Weighted sampling for Random Forest
+}
+
+all_results00 = []
+
+for model_name, sampler in resamplers.items():
+
+    pipeline = ImbPipeline([
+        ('sampler', sampler),
+        ('clf', RandomForestClassifier(random_state=42))
+    ])
+    if model_name == 'RFC_with_weighted_sampling':
+        sample_weights = compute_sample_weight(class_weight="balanced", y=y_train0)
+        pipeline.fit(X_train0, y_train0, clf__sample_weight=sample_weights)
+    else:
+        pipeline.fit(X_train0, y_train0)
+
+    y_pred = pipeline.predict(X_test)
+
+    all_results00.append({
+        "type": model_name,
+        "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+        "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+    })
+
+# Model_names = ['RFC', 'RFC_with_weighted_sampling', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
+# all_results00 = []
+
+# pipeline = Pipeline([
+#     ('clf', RandomForestClassifier(random_state=42))])  
+
+
+# for model in Model_names:
+#     if model == 'RFC':
+#         X_train = X_train0
+#         y_train = y_train0
+#     elif model == 'SMOTE':
+#         smote = SMOTE(sampling_strategy='auto', random_state=42)
+#         X_train, y_train = smote.fit_resample(X_train0, y_train0)
+#     elif model == 'ROS':
+#         ros = RandomOverSampler(random_state=42)
+#         X_train, y_train = ros.fit_resample(X_train0, y_train0)
+#     elif model == 'RUS':
+#         rus = RandomUnderSampler(random_state=42)
+#         X_train, y_train = rus.fit_resample(X_train0, y_train0)
+#     elif model == 'ADASYN':
+#         adasyn = ADASYN(random_state=42)
+#         X_train, y_train = adasyn.fit_resample(X_train0, y_train0)
+
+#     if  model == 'RFC_with_weighted_sampling':
+#         sample_weights = compute_sample_weight(class_weight="balanced", y=y_train0)
+#         pipeline.fit(X_train0, y_train0, clf__sample_weight=sample_weights)
+#         y_pred = pipeline.predict(X_test) 
+#     else:  
+#         pipeline.fit(X_train, y_train)
+#         y_pred = pipeline.predict(X_test)
+
+#     all_results00.append({
+#             "type": model,
+#             "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+#             "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+#         })
+
+n_models = len(all_results00)
+n_cols = int(np.ceil(np.sqrt(n_models)))
+n_rows = int(np.ceil(n_models / n_cols))
+
+df_results00 = pd.DataFrame(all_results00).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
+
+fig00, axes00 = plt.subplots(n_rows, n_cols, figsize=(15, 12))
+axes00 = axes00.flatten() 
+
+for idx, result in df_results00.iterrows():
+    disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
+    disp.plot(ax=axes00[idx], colorbar=False, cmap='Blues')
+    axes00[idx].set_title(f'{result["type"]}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
+
+for idx in range(n_models, len(axes00)):
+    axes00[idx].axis('off')
+
+plt.tight_layout()
+
+#########################################
+# KNN Classifier with feature engineering
+all_results_knn00=[]
+categorical_cols = ['Marital status', 'Application mode', 'Course', 'Previous qualification', 
+                    "Nationality", "Mother's qualification", "Father's qualification"]
+
+preprocessor_knn_norm = ColumnTransformer(
+    transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols),
+    ('cont', StandardScaler(), continuous_cols + ordinal_cols)],
+    remainder='passthrough')
+
+preprocessor_knn = ColumnTransformer(
+    transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols)],
+    remainder='passthrough')
+
+resamplers = {
+    'SMOTE': SMOTE(random_state=42),
+    'ROS': RandomOverSampler(random_state=42),
+    'ADASYN': ADASYN(random_state=42),
+    'RUS': RandomUnderSampler(random_state=42),
+    'KNN': None,  # No resampling for KNN
+    'KNN_with_normalization': None  # Normalization for KNN
+}
+
+
+for model_name, sampler in resamplers.items():
+
+    pipeline = ImbPipeline([
+        ('sampler', sampler),
+        ('clf',  KNeighborsClassifier(n_neighbors=3))
+    ])
+    if model_name == 'KNN_with_normalization':
+        pipeline.steps.insert(0, ('preprocess', preprocessor_knn_norm))
+        pipeline.fit(X_train0, y_train0)
+    else:
+        pipeline.steps.insert(0, ('preprocess', preprocessor_knn))
+        pipeline.fit(X_train0, y_train0)
+
+    y_pred = pipeline.predict(X_test)
+
+    all_results_knn00.append({
+        "type": model_name,
+        "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+        "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+    })
+
+# all_results_knn00=[]
+# categorical_cols = ['Marital status', 'Application mode', 'Course', 'Previous qualification', 
+#                     "Nationality", "Mother's qualification", "Father's qualification"]
+#     ###
+# preprocessor_knn = ColumnTransformer(
+#     transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols)],
+#     remainder='passthrough')
+
+# pipeline_knn = Pipeline([
+#     ('preprocess', preprocessor_knn),
+#     ('clf', KNeighborsClassifier(n_neighbors=3))])
+
+# pipeline_knn.fit(X_train0, y_train0)
+# y_pred = pipeline_knn.predict(X_test)
+
+# all_results_knn00.append({
+#             "type": "knn_without_normalization",
+#             "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+#             "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+#         })
+#     ###
+
+# preprocessor_knn = ColumnTransformer(
+#     transformers=[('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols),
+#     ('cont', StandardScaler(), continuous_cols + ordinal_cols)],
+#     remainder='passthrough')
+
+# pipeline_knn = Pipeline([
+#     ('preprocess', preprocessor_knn),
+#     ('clf', KNeighborsClassifier(n_neighbors=3))])
+
+# Model_names_knn = ['knn', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
+# for model in Model_names_knn:
+#     if model == 'knn':
+#         X_train = X_train0
+#         y_train = y_train0
+#     elif model == 'SMOTE':
+#         smote = SMOTE(sampling_strategy='auto', random_state=42)
+#         X_train, y_train = smote.fit_resample(X_train0, y_train0)
+#     elif model == 'ROS':
+#         ros = RandomOverSampler(random_state=42)
+#         X_train, y_train = ros.fit_resample(X_train0, y_train0)
+#     elif model == 'RUS':
+#         rus = RandomUnderSampler(random_state=42)
+#         X_train, y_train = rus.fit_resample(X_train0, y_train0)
+#     elif model == 'ADASYN':
+#         adasyn = ADASYN(random_state=42)
+#         X_train, y_train = adasyn.fit_resample(X_train0, y_train0)
+
+#     pipeline_knn.fit(X_train, y_train)
+#     y_pred = pipeline_knn.predict(X_test)
+            
+#     all_results_knn00.append({
+#             "type": model,
+#             "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+#             "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+#         })
+
+n_models = len(all_results_knn00)
+n_cols = int(np.ceil(np.sqrt(n_models)))
+n_rows = int(np.ceil(n_models / n_cols))
+
+df_results_knn00 = pd.DataFrame(all_results_knn00).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
+
+fig11, axes11 = plt.subplots(n_rows, n_cols, figsize=(15, 12))
+axes11 = axes11.flatten() 
+
+for idx, result in df_results_knn00.iterrows():
+    disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
+    disp.plot(ax=axes11[idx], colorbar=False, cmap='Blues')
+    axes11[idx].set_title(f'{result["type"]}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
+
+for idx in range(n_models, len(axes11)):
+    axes11[idx].axis('off')
+plt.tight_layout()
+
+##########################################
+# # Grid Search for Random Forest Classifier
+
+# resamplers = {
+#     'SMOTE': SMOTE(random_state=42),
+#     'ROS': RandomOverSampler(random_state=42),
+#     'ADASYN': ADASYN(random_state=42),
+# }
+
+# all_results_grid = []
+
+# param_grid = {
+#     'clf__n_estimators': [100, 200, 300],
+#     'clf__max_depth': [None, 10, 20],
+#     'clf__min_samples_split': [2, 5, 10]
+# }
+
+# for model_name, sampler in resamplers.items():
+
+#     pipeline = ImbPipeline([
+#         ('sampler', sampler),
+#         ('clf', RandomForestClassifier(random_state=42))
+#     ])
+
+#     grid_search = GridSearchCV(pipeline, param_grid, cv=5, scoring='f1_macro', n_jobs=-1)
+#     grid_search.fit(X_train0, y_train0)
+
+#     best_params = grid_search.best_params_
+#     best_score = grid_search.best_score_
+
+#     # Fit best model to full training data and evaluate on test set
+#     best_model = grid_search.best_estimator_
+#     best_model.fit(X_train0, y_train0)  # sampler will be applied internally
+#     y_pred = best_model.predict(X_test)
+
+#     all_results_grid.append({
+#         "type": model_name,
+#         "best_params": best_params,
+#         "best_score": best_score,
+#         "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+#         "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+#     })
+
+# n_models = len(all_results_grid)
+# n_cols = int(np.ceil(np.sqrt(n_models)))
+# n_rows = int(np.ceil(n_models / n_cols))
+# df_results_grid = pd.DataFrame(all_results_grid).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
+# fig_grid, axes_grid = plt.subplots(n_rows, n_cols, figsize=(15, 12))
+# axes_grid = axes_grid.flatten()
+# for idx, result in df_results_grid.iterrows():
+#     disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
+#     disp.plot(ax=axes_grid[idx], colorbar=False, cmap='Blues')
+#     axes_grid[idx].set_title(f'{result["type"]}\nBest Score: {result["best_score"]:.3f}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
+
+
+# for idx in range(n_models, len(axes_grid)):
+#     axes_grid[idx].axis('off')
+
+# plt.tight_layout()
+##########################################
 with st.expander("Results"):
+    st.write('The results of the models are shown below, including the macro-averaged F1 score and confusion matrices for each model.')
+    st.write('The results without considering feature engineering:')
     tab11,tab22, tab33 = st.tabs(["KNN", "RFC", "Results table"])
 
     with tab22:
@@ -287,7 +701,35 @@ with st.expander("Results"):
         st.table(df_results_knn.drop(columns=['confusion_matrix']))
         st.caption('Random Forest Classifier Results')
         st.table(df_results.drop(columns=['confusion_matrix']))
-        
+
+    st.write('## The results with considering feature engineering:')
+    tab111,tab222, tab333 = st.tabs(["KNN", "RFC", "Results table"])
+    with tab222:
+        st.write('Here are the confusion matrices for the Random Forest Classifier (RFC) with different sampling techniques applied to the training data, considering feature engineering.')
+        st.write('The models are evaluated using macro-averaged F1 score and confusion matrices.')
+        st.write('The models are ordered by macro-averaged F1 score, with the best performing model at the first.')
+        st.pyplot(fig00)
+    with tab111:
+        st.write('Here are the confusion matrices for the KNN classifier with different sampling techniques applied to the training data, considering feature engineering.')
+        st.write('The models are evaluated using macro-averaged F1 score and confusion matrices.')
+        st.write('The models are ordered by macro-averaged F1 score, with the best performing model at the first.')
+        st.pyplot(fig11)
+    with tab333:
+        st.write('Here is the table with the results of the models, considering feature engineering.')
+        st.write('The table shows the macro-averaged F1 score for each model.')
+        st.write('The models are ordered by macro-averaged F1 score, with the best performing model at the first.')
+        st.caption('KNN Classifier Results')
+        st.table(df_results_knn00.drop(columns=['confusion_matrix']))
+        st.caption('Random Forest Classifier Results')
+        st.table(df_results00.drop(columns=['confusion_matrix']))
+    # st.write('## Applying Grid Search:')
+    # st.write('Grid Search is used to find the best hyperparameters for the Random Forest Classifier (RFC)')
+    # st.write('The hyperparameters are tuned using Grid Search with cross-validation.')
+    # st.pyplot(fig_grid)
+    # st.write('The best hyperparameters found are:')
+    # st.write(best_params)
+
+
 st.subheader('Conclusion')
 with st.expander("See explanation"):
     st.write('The Random Forest Classifier (RFC) with Random Oversampling has the highest macro-averaged F1 score of {:.3f}.'.format(df_results.iloc[0]['macro_averaged_F1_score']))
