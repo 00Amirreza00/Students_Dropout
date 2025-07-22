@@ -148,30 +148,37 @@ with st.expander("Data Modelling"):
     with tab1:
         st.write('SMOTE (Synthetic Minority Over-sampling Technique) is a popular technique for addressing class imbalance by generating synthetic samples for the minority class.')
         st.write('This technique generates synthetic samples for the minority classes by interpolating between existing samples.')
-        st.image('smote.jpg', caption='SMOTE technique illustration', use_column_width=True)
+        st.image('smote.jpg', caption='SMOTE technique illustration', use_container_width=True)
     with tab2:
         st.write('Random Over Sampling (ROS) is a simple technique that randomly duplicates samples from the minority classes to balance the class distribution.')    
         st.write('This technique randomly duplicates samples from the minority classes to balance the class distribution.')
-        st.image('ros.jpg', caption='Random Over Sampling (ROS) technique illustration', use_column_width=True)
+        st.image('ros.jpg', caption='Random Over Sampling (ROS) technique illustration', use_container_width=True)
     with tab3:
         st.write('Random Under Sampling (RUS) is a technique that randomly removes samples from the majority class to balance the class distribution.')
         st.write('This technique randomly removes samples from the majority class to balance the class distribution.')
-        st.image('rus.jpg', caption='Random Under Sampling (RUS) technique illustration', use_column_width=True)
+        st.image('rus.jpg', caption='Random Under Sampling (RUS) technique illustration', use_container_width=True)
     with tab4:
         st.write('ADASYN (Adaptive Synthetic Sampling) is an advanced technique that generates synthetic samples for the minority classes, focusing more on the difficult-to-learn samples.')
         st.write('This technique generates synthetic samples for the minority classes, focusing more on the difficult-to-learn samples.')
-        st.image('adasyn.jpg', caption='ADASYN technique illustration', use_column_width=True)
-    
+        st.image('adasyn.jpg', caption='ADASYN technique illustration', use_container_width=True)
+
     tab5, =st.tabs(["Feature Engineering"])
     with tab5:
         st.write('New features are created based on the existing features to improve the model performance:')
         st.write('- "Curricular units (approved)" and "Curricular units (enrolled)" are combined to create a new feature "approved-enrolled ratio".')
+        st.write('--  Curricular units (approved) / Curricular units (enrolled)')
         st.write('- "Curricular units (evaluations)" and "Curricular units (enrolled)" are combined to create a new feature "evals-enrolled ratio".')
+        st.write('-- Curricular units (evaluations) / Curricular units (enrolled)')
         st.write('- "Curricular units (enrolled)" and "Curricular units (approved)" are used to create a new feature "currently enrolled".')
+        st.write('-- 1 if Curricular units (enrolled) > 0, else 0')
         st.write('- "Curricular units (enrolled)" and "Curricular units (approved)" are used to create a new feature "pending units (in progress)".')
+        st.write('-- Curricular units (enrolled) - Curricular units (approved)')
         st.write('- "Curricular units (approved)" and "Curricular units (evaluations)" are used to create new features indicating whether the student had any semester with zero approved units or evaluations.')
+        st.write('-- 1 if Curricular units (approved) == 0, else 0')
         st.write('- "Age at enrollment" and "Admission grade" are combined to create a new feature "age-admission interaction".')
+        st.write('-- Age at enrollment * Admission grade')
         st.write('- "Mother\'s occupation" and "Father\'s occupation" are combined to create a new feature "highest parent occupation".')
+        st.write('-- max(Mother\'s occupation, Father\'s occupation)')
 
 ######
 # without considering feature engineering
@@ -191,8 +198,8 @@ resamplers = {
     'ROS': RandomOverSampler(random_state=42),
     'ADASYN': ADASYN(random_state=42),
     'RUS': RandomUnderSampler(random_state=42),
-    'RFC': None,  # No resampling for Random Forest
-    'RFC_with_weighted_sampling': None  # Weighted sampling for Random Forest
+    'RFC': None, 
+    'RFC_with_weighted_sampling': None 
 }
 
 all_results = []
@@ -261,8 +268,8 @@ resamplers = {
     'ROS': RandomOverSampler(random_state=42),
     'ADASYN': ADASYN(random_state=42),
     'RUS': RandomUnderSampler(random_state=42),
-    'KNN': None,  # No resampling for KNN
-    'KNN_with_normalization': None  # Normalization for KNN
+    'KNN': None, 
+    'KNN_with_normalization': None
 }
 
 
@@ -322,8 +329,8 @@ resamplers = {
     'ROS': RandomOverSampler(random_state=42),
     'ADASYN': ADASYN(random_state=42),
     'RUS': RandomUnderSampler(random_state=42),
-    'RFC': None,  # No resampling for Random Forest
-    'RFC_with_weighted_sampling': None  # Weighted sampling for Random Forest
+    'RFC': None,  
+    'RFC_with_weighted_sampling': None 
 }
 
 all_results00 = []
@@ -387,8 +394,8 @@ resamplers = {
     'ROS': RandomOverSampler(random_state=42),
     'ADASYN': ADASYN(random_state=42),
     'RUS': RandomUnderSampler(random_state=42),
-    'KNN': None,  # No resampling for KNN
-    'KNN_with_normalization': None  # Normalization for KNN
+    'KNN': None,  
+    'KNN_with_normalization': None 
 }
 
 
@@ -431,66 +438,101 @@ for idx in range(n_models, len(axes11)):
     axes11[idx].axis('off')
 plt.tight_layout()
 
+##..................
 ##########################################
-# # Grid Search for Random Forest Classifier
+# without considering categorical features
+categorical_cols = ['Marital status', 'Application mode', 'Course', 'Previous qualification', 
+                    "Nationality", "Mother's qualification", "Father's qualification"]
+X = df.drop(columns=[target_col] + categorical_cols)
+y = df[target_col]
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
 
-# resamplers = {
-#     'SMOTE': SMOTE(random_state=42),
-#     'ROS': RandomOverSampler(random_state=42),
-#     'ADASYN': ADASYN(random_state=42),
-# }
+X_train0, X_test, y_train0, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)    
 
-# all_results_grid = []
+Model_names = ['RFC', 'RFC_with_weighted_sampling', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
+all_results_without_cat = []
 
-# param_grid = {
-#     'clf__n_estimators': [100, 200, 300],
-#     'clf__max_depth': [None, 10, 20],
-#     'clf__min_samples_split': [2, 5, 10]
-# }
+resamplers = {
+    'SMOTE': SMOTE(random_state=42),
+    'ROS': RandomOverSampler(random_state=42),
+    'ADASYN': ADASYN(random_state=42),
+    'RUS': RandomUnderSampler(random_state=42),
+    'RFC': None, 
+    'RFC_with_weighted_sampling': None 
+}
 
-# for model_name, sampler in resamplers.items():
+all_results_without_cat = []
 
-#     pipeline = ImbPipeline([
-#         ('sampler', sampler),
-#         ('clf', RandomForestClassifier(random_state=42))
-#     ])
+for model_name, sampler in resamplers.items():
 
-#     grid_search = GridSearchCV(pipeline, param_grid, cv=5, scoring='f1_macro', n_jobs=-1)
-#     grid_search.fit(X_train0, y_train0)
+    pipeline = ImbPipeline([
+        ('sampler', sampler),
+        ('clf', RandomForestClassifier(random_state=42))
+    ])
+    if model_name == 'RFC_with_weighted_sampling':
+        sample_weights = compute_sample_weight(class_weight="balanced", y=y_train0)
+        pipeline.fit(X_train0, y_train0, clf__sample_weight=sample_weights)
+    else:
+        pipeline.fit(X_train0, y_train0)
 
-#     best_params = grid_search.best_params_
-#     best_score = grid_search.best_score_
+    y_pred = pipeline.predict(X_test)
 
-#     # Fit best model to full training data and evaluate on test set
-#     best_model = grid_search.best_estimator_
-#     best_model.fit(X_train0, y_train0)  # sampler will be applied internally
-#     y_pred = best_model.predict(X_test)
-
-#     all_results_grid.append({
-#         "type": model_name,
-#         "best_params": best_params,
-#         "best_score": best_score,
-#         "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
-#         "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
-#     })
-
-# n_models = len(all_results_grid)
-# n_cols = int(np.ceil(np.sqrt(n_models)))
-# n_rows = int(np.ceil(n_models / n_cols))
-# df_results_grid = pd.DataFrame(all_results_grid).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
-# fig_grid, axes_grid = plt.subplots(n_rows, n_cols, figsize=(15, 12))
-# axes_grid = axes_grid.flatten()
-# for idx, result in df_results_grid.iterrows():
-#     disp = ConfusionMatrixDisplay(confusion_matrix=result["confusion_matrix"], display_labels=le.classes_)
-#     disp.plot(ax=axes_grid[idx], colorbar=False, cmap='Blues')
-#     axes_grid[idx].set_title(f'{result["type"]}\nBest Score: {result["best_score"]:.3f}\nMacro-averaged F1 score: {result["macro_averaged_F1_score"]:.3f}')
-
-
-# for idx in range(n_models, len(axes_grid)):
-#     axes_grid[idx].axis('off')
-
-# plt.tight_layout()
+    all_results_without_cat.append({
+        "type": model_name,
+        "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+        "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+    })
+df_results_without_cat = pd.DataFrame(all_results_without_cat).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
 ##########################################
+#XGBoost Classifier
+from xgboost import XGBClassifier
+
+X = df.drop(columns=target_col)
+y = df[target_col]
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+
+X_train0, X_test, y_train0, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)    
+
+Model_names = ['RFC', 'RFC_with_weighted_sampling', 'SMOTE', 'ROS', 'RUS', 'ADASYN']
+all_results_xgboost = []
+
+resamplers = {
+    'SMOTE': SMOTE(random_state=42),
+    'ROS': RandomOverSampler(random_state=42),
+    'ADASYN': ADASYN(random_state=42),
+    'RUS': RandomUnderSampler(random_state=42),
+    'XGBoost': None,
+    'XGBoost_with_weighted_sampling': None
+}
+
+all_results_xgboost = []
+
+
+for model_name, sampler in resamplers.items():
+    if model_name == 'XGBoost_with_weighted_sampling':
+        pipeline = ImbPipeline([
+            ('sampler', sampler),
+            ('clf', XGBClassifier(random_state=42, enable_categorical=True,
+                                  use_label_encoder=False, eval_metric='mlogloss'))
+        ])
+    if model_name == 'XGBoost_with_weighted_sampling':
+        sample_weights = compute_sample_weight(class_weight="balanced", y=y_train0)
+        pipeline.fit(X_train0, y_train0, clf__sample_weight=sample_weights)
+    else:
+        pipeline.fit(X_train0, y_train0)
+
+    y_pred = pipeline.predict(X_test)
+
+    all_results_xgboost.append({
+        "type": model_name,
+        "macro_averaged_F1_score": f1_score(y_test, y_pred, average='macro'),
+        "confusion_matrix": confusion_matrix(y_test, y_pred, normalize='true'),
+    })
+
+df_results_xgboost = pd.DataFrame(all_results_xgboost).sort_values("macro_averaged_F1_score", ascending=False).reset_index(drop=True)
+#########################################
 with st.expander("Results"):
     st.write('The results of the models are shown below, including the macro-averaged F1 score and confusion matrices for each model.')
     st.write('The results without considering feature engineering:')
@@ -523,11 +565,13 @@ with st.expander("Results"):
     tab111,tab222, tab333 = st.tabs(["KNN", "RFC", "Results table"])
     with tab222:
         st.write('Here are the confusion matrices for the Random Forest Classifier (RFC) with different sampling techniques applied to the training data, considering feature engineering.')
+        st.write('Categorical features are passed to the model without encoding.')
         st.write('The models are evaluated using macro-averaged F1 score and confusion matrices.')
         st.write('The models are ordered by macro-averaged F1 score, with the best performing model at the first.')
         st.pyplot(fig00)
     with tab111:
         st.write('Here are the confusion matrices for the KNN classifier with different sampling techniques applied to the training data, considering feature engineering.')
+        st.write('OneHotEncoder is used to convert the categorical features into numerical features, and StandardScaler is used to normalize the continuous features.')
         st.write('The models are evaluated using macro-averaged F1 score and confusion matrices.')
         st.write('The models are ordered by macro-averaged F1 score, with the best performing model at the first.')
         st.pyplot(fig11)
@@ -539,12 +583,10 @@ with st.expander("Results"):
         st.table(df_results_knn00.drop(columns=['confusion_matrix']))
         st.caption('Random Forest Classifier Results')
         st.table(df_results00.drop(columns=['confusion_matrix']))
-    # st.write('## Applying Grid Search:')
-    # st.write('Grid Search is used to find the best hyperparameters for the Random Forest Classifier (RFC)')
-    # st.write('The hyperparameters are tuned using Grid Search with cross-validation.')
-    # st.pyplot(fig_grid)
-    # st.write('The best hyperparameters found are:')
-    # st.write(best_params)
+        st.caption('Random Forest Classifier Results without considering categorical features')
+        st.table(df_results_without_cat.drop(columns=['confusion_matrix']))
+        st.caption('XGBoost Classifier Results')
+        st.table(df_results_xgboost.drop(columns=['confusion_matrix']))
 
 
 st.subheader('Conclusion')
