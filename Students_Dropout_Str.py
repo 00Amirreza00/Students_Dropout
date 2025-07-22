@@ -14,7 +14,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from imblearn.over_sampling import SMOTE , ADASYN, RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.pipeline import Pipeline as ImbPipeline
-from sklearn.model_selection import GridSearchCV
+
 
 
 st.image('picture1.jpg')
@@ -169,14 +169,14 @@ with st.expander("Data Modelling"):
         st.write('--  Curricular units (approved) / Curricular units (enrolled)')
         st.write('- "Curricular units (evaluations)" and "Curricular units (enrolled)" are combined to create a new feature "evals-enrolled ratio".')
         st.write('-- Curricular units (evaluations) / Curricular units (enrolled)')
-        st.write('- "Curricular units (enrolled)" and "Curricular units (approved)" are used to create a new feature "currently enrolled".')
+        st.write('- "Curricular units (enrolled)" is used to create a new feature "currently enrolled".')
         st.write('-- 1 if Curricular units (enrolled) > 0, else 0')
         st.write('- "Curricular units (enrolled)" and "Curricular units (approved)" are used to create a new feature "pending units (in progress)".')
         st.write('-- Curricular units (enrolled) - Curricular units (approved)')
         st.write('- "Curricular units (approved)" and "Curricular units (evaluations)" are used to create new features indicating whether the student had any semester with zero approved units or evaluations.')
         st.write('-- 1 if Curricular units (approved) == 0, else 0')
-        st.write('- "Age at enrollment" and "Admission grade" are combined to create a new feature "age-admission interaction".')
-        st.write('-- Age at enrollment * Admission grade')
+        # st.write('- "Age at enrollment" and "Admission grade" are combined to create a new feature "age-admission interaction".')
+        # st.write('-- Age at enrollment * Admission grade')
         st.write('- "Mother\'s occupation" and "Father\'s occupation" are combined to create a new feature "highest parent occupation".')
         st.write('-- max(Mother\'s occupation, Father\'s occupation)')
 
